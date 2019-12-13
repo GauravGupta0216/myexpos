@@ -1,0 +1,176 @@
+//---------------------------------RESOURCE MANAGER-----------------------------------//
+
+alias functionNum R1;
+
+//--------------------ACQUIRE BUFFER FUNCTION--------------------------//
+if(functionNum == 1) then
+	alias currentPID R2;
+	alias buff_num R3;
+	while([BUFFER_TABLE + 4*buff_num + 2] != -1) do
+		[PROCESS_TABLE + 16*currentPID + 4] = WAIT_BUFFER;
+		[PROCESS_TABLE + 16*currentPID + 5] = buff_num;
+		
+		backup;
+		call MOD_5;
+		restore;
+	endwhile;
+	[BUFFER_TABLE + 4*buff_num + 2] = currentPID;
+	return;
+endif;
+	
+//--------------------RELEASE BUFFER FUNCTION---------------------------//
+if(functionNum == 2) then
+	alias currentPID R2;
+	alias buff_num R3;
+	if([BUFFER_TABLE + 4*buff_num + 2] != currentPID) then
+		R0 = -1;
+		return;
+	endif;
+
+	[BUFFER_TABLE + 4*buff_num + 2] = -1;
+	alias itr R4;
+	itr = 0;
+	while(itr < 16) do
+		if([PROCESS_TABLE+16*itr+4]==WAIT_BUFFER && [PROCESS_TABLE+16*itr+5]==buff_num) then
+			[PROCESS_TABLE + 16*itr + 4] = READY;
+		endif;
+		itr = itr + 1;
+	endwhile;
+	R0 = 0;
+	return;
+endif;
+
+//--------------------ACQUIRE DISK FUNCTION-----------------------------//
+if(functionNum == 3) then
+	alias currentPID R2;
+	while([DISK_STATUS_TABLE] == 1) do
+		[PROCESS_TABLE + 16*currentPID + 4] = WAIT_DISK;
+		backup;
+		call MOD_5;
+		restore;
+	endwhile;
+	[DISK_STATUS_TABLE] = 1;
+	[DISK_STATUS_TABLE + 4] = currentPID;
+	return;
+endif;
+
+//---------------------ACQUIRE INODE FUNCTION---------------------------//
+if(functionNum == ACQUIRE_INODE) then
+	alias currentPID R2;
+	alias inode_idx R3;
+	while([FILE_STATUS_TABLE + 4*inode_idx] != -1) do
+		[PROCESS_TABLE + 16*currentPID + 4] = WAIT_FILE;
+		[PROCESS_TABLE + 16*currentPID + 5] = inode_idx;
+		
+		backup;
+		call MOD_5;
+		restore;
+	endwhile;
+
+	//If file got deleted by the time inode acquired then return -1
+	if([INODE_TABLE + 16*inode_idx + 1] == -1) then
+		R0 = -1;
+		return;
+	endif;
+
+	[FILE_STATUS_TABLE + 4*inode_idx] = currentPID;
+	
+	R0 = 0;
+	return;
+endif;
+
+//----------------------------RELEASE INODE FUNCTION-------------------------//
+if(functionNum == RELEASE_INODE) then
+	alias currentPID R2;
+	alias inode_idx R3;
+	if([FILE_STATUS_TABLE + 4*inode_idx] != currentPID) then            //return -1
+		R0 = -1;
+		return;
+	endif;
+
+	[FILE_STATUS_TABLE + 4*inode_idx] = -1;
+	alias itr R4;
+	itr = 0;
+	while(itr < 16) do
+		if([PROCESS_TABLE+16*itr+4]==WAIT_FILE && [PROCESS_TABLE+16*itr+5]==inode_idx) then
+			[PROCESS_TABLE + 16*itr + 4] = READY;
+		endif;
+		itr = itr + 1;
+	endwhile;
+	R0 = 0;
+	return;
+endif;
+
+//--------------------ACQUIRE SEMAPHORE-------------------------------------//
+if(functionNum == ACQUIRE_SEMAPHORE) then
+	alias currentPID R2;
+	alias itr R5;
+	itr = 0;
+	R0 = -1;
+	while(itr < 32) do
+		if([SEMAPHORE_TABLE + 4*itr + 1] == 0) then
+			[SEMAPHORE_TABLE + 4*itr] = -1;
+			[SEMAPHORE_TABLE + 4*itr + 1] = 1;
+			R0 = itr;
+			return;
+		endif;
+		itr = itr + 1;
+	endwhile;
+	return;
+endif;
+
+//---------------------------RELEASE SEMAPHORE------------------------------//
+if(functionNum == RELEASE_SEMAPHORE) then
+	alias currentPID R2;
+	alias sem_idx R3;
+	alias itr R5;
+
+	if([SEMAPHORE_TABLE + 4*sem_idx] == currentPID) then
+		[SEMAPHORE_TABLE + 4*sem_idx] = -1;
+		itr = 0;
+		while(itr < 16) do
+			if([PROCESS_TABLE+16*itr+4]==WAIT_SEMAPHORE && [PROCESS_TABLE+16*itr+5]==sem_idx) then
+				[PROCESS_TABLE + 16*itr + 4] = READY;
+				[PROCESS_TABLE + 16*itr + 5] = -1;
+			endif;
+			itr = itr + 1;
+		endwhile;
+	endif;
+	[SEMAPHORE_TABLE + 4*sem_idx + 1] = [SEMAPHORE_TABLE + 4*sem_idx + 1] - 1;
+	return;
+endif;
+	
+//-----------------------Acquire Terminal function--------------------------//
+if(functionNum == 8) then
+	alias currentPID R2;
+	while([TERMINAL_STATUS_TABLE] == 1) do
+		[PROCESS_TABLE + 16*[SYSTEM_STATUS_TABLE + 1] + 4] = WAIT_TERMINAL;
+		backup;
+		call MOD_5;
+		restore;
+	endwhile;
+	[TERMINAL_STATUS_TABLE] = 1;
+	[TERMINAL_STATUS_TABLE + 1] = currentPID;
+	return;
+endif;
+
+//-----------------------Release Terminal function--------------------------//
+if(functionNum == 9) then
+	alias currentPID R2;
+	if(currentPID != [TERMINAL_STATUS_TABLE + 1]) then
+		R0 = -1;
+		return;
+	endif;
+	[TERMINAL_STATUS_TABLE] = 0;
+	alias TEMP_PID R5;
+	TEMP_PID = 0;
+	while(TEMP_PID < 16) do
+		if([PROCESS_TABLE + 16*TEMP_PID + 4] == WAIT_TERMINAL) then
+			[PROCESS_TABLE + 16*TEMP_PID + 4] = READY;
+		endif;
+		TEMP_PID = TEMP_PID + 1;
+	endwhile;
+	R0 = 0;
+	return;
+endif;
+		

@@ -1,0 +1,229 @@
+//---------------------------PROCESS MANAGER MODULE-----------------------------//
+
+alias functionNum R1;
+alias currentPID R2;
+
+//-------------------------------GET PCB ENTRY--------------------------------//
+if(functionNum == GET_PCB_ENTRY) then
+	multipush(R5);
+	alias i R5;
+	i = 0;
+	R0 = -1;
+	while(i<16) do
+		if([PROCESS_TABLE+16*i+4] == TERMINATED) then
+			R0 = i;
+			[PROCESS_TABLE+16*i+4] = ALLOCATED;
+			[PROCESS_TABLE+16*i+1] = i;
+			[PROCESS_TABLE+16*i+14] = PAGE_TABLE_BASE+i*20;
+			[PROCESS_TABLE+16*i+15] = 10;
+			//multipop(R5);
+			break;
+		endif;
+		i = i + 1;
+	endwhile;
+	multipop(R5);
+	return;
+endif;
+
+//------------------------------FREE USER AREA PAGE----------------------------//
+if(functionNum == FREE_USER_AREA_PAGE)then
+
+	alias userAreaPage R3;
+	userAreaPage = [PROCESS_TABLE + currentPID*16 + 11];
+
+	alias count R5;
+	count = 496;
+	while(count < 512) do
+		if([userAreaPage*512 + count] == SEMAPHORE) then
+			backup;
+			R1 = RELEASE_SEMAPHORE;
+			R3 = [userAreaPage*512 + 496 + count + 1];
+			R2 = currentPID;
+			call RESOURCE_MANAGER;
+			restore;
+		endif;
+
+		if([userAreaPage*512 + count] == FILE) then
+			backup;
+			R1 = CLOSE;
+			R2 = [userAreaPage*512 + 496 + count + 1];
+			call FILE_MANAGER;
+			restore;
+		endif;
+		[userAreaPage*512 + count] = -1;
+		count = count + 2;
+	endwhile;			
+		
+	backup;
+	R1 = RELEASE_PAGE;
+	R2 = [PROCESS_TABLE + currentPID*16 + 11];
+	call MEMORY_MANAGER;
+	restore;
+
+	return;
+
+endif;	
+
+
+//--------------------------------EXIT PROCESS---------------------------------//
+if(functionNum == EXIT_PROCESS)then
+
+	//if EXIT is not invoked from EXEC
+	if([PROCESS_TABLE + 16*currentPID + 9] != 9) then
+		alias i R4;
+		i = 0;
+		while(i<16) do
+			if([PROCESS_TABLE+i*16+4] == WAIT_PROCESS && [PROCESS_TABLE+i*16+5] == currentPID) then
+				[PROCESS_TABLE+i*16+4] = READY;
+			endif;
+			
+			if([PROCESS_TABLE+i*16+2] == currentPID) then	//checking the ppid of each process
+				[PROCESS_TABLE+i*16+2] = -1;	//indicating that child process has become orphan
+			endif;
+			i = i + 1;
+		endwhile;
+	endif;
+
+	//Invoking FREE_PAGE_TABLE function.
+	backup;
+	R1 = FREE_PAGE_TABLE;
+	R2 = currentPID;
+	call PROCESS_MANAGER;
+
+	//Invoking FREE_USER_AREA_PAGE function.
+	R1 = FREE_USER_AREA_PAGE;
+	R2 = currentPID;
+	call PROCESS_MANAGER;
+	restore;
+
+	[PROCESS_TABLE + currentPID*16 + 4] = TERMINATED;
+	return;
+endif;
+
+//---------------------------------FREE PAGE TABLE--------------------------------//
+if(functionNum == FREE_PAGE_TABLE)then
+
+	//Invalidating library pages.
+	[PTBR+0] = -1;
+	[PTBR+1] = "0000";
+	[PTBR+2] = -1;
+	[PTBR+3] = "0000";
+
+	alias iter R3;
+	iter = 2;
+
+	while(iter < 10)do
+		if([PTBR + 2*iter + 1]!="0000")then
+			//Calling Release page function.
+			backup;
+			R1 = RELEASE_PAGE;
+			R2 = [PTBR + 2*iter];
+			call MEMORY_MANAGER;
+			restore;
+			//Invalidating page table entry of the page.
+			[PTBR + 2*iter + 1] = "0000";
+		endif;
+
+		iter = iter + 1;
+
+	endwhile;
+
+	iter = 2;
+	while(iter <= 3)do
+		if([DISK_MAP_TABLE + currentPID*10 + iter]!=-1)then
+			backup;
+			R1 = RELEASE_BLOCK;
+			R2 = [DISK_MAP_TABLE + currentPID*10 + iter];
+			call MEMORY_MANAGER;
+			restore;
+		endif;
+		iter = iter + 1;
+	endwhile;
+
+	iter = 8;
+	while(iter <= 9)do
+		if([DISK_MAP_TABLE + currentPID*10 + iter]!=-1)then
+			backup;
+			R1 = RELEASE_BLOCK;
+			R2 = [DISK_MAP_TABLE + currentPID*10 + iter];
+			call MEMORY_MANAGER;
+			restore;
+		endif;
+		iter = iter + 1;
+	endwhile;	
+
+	//Invalidating disk map table.
+	iter = 0;
+	while(iter < 10)do
+		[DISK_MAP_TABLE + currentPID*10 + iter] = -1;
+		iter = iter + 1;
+	endwhile; 
+	return;
+endif;
+
+//-------------------------KILL ALL-----------------------------------//
+if(functionNum == KILL_ALL) then
+	alias itr R3;
+	itr = 0;
+	while(itr < MAX_FILE_NUM) do
+		if([INODE_TABLE + 16*itr + 1] != -1) then
+			backup;
+			R1 = ACQUIRE_INODE;
+			R2 = currentPID;
+			R3 = itr;
+			call MOD_0;
+			restore;
+		endif;
+		itr = itr + 1;
+	endwhile;
+
+	itr = 2;
+	while(itr < 16) do
+		if(itr != currentPID && [PROCESS_TABLE + 16*itr + 4] != TERMINATED) then
+			backup;
+			R1 = EXIT_PROCESS;
+			R2 = itr;
+			call MOD_1;
+			restore;
+		endif;
+		itr = itr + 1;
+	endwhile;
+
+	itr = 0;
+	while(itr < MAX_FILE_NUM) do
+		if([INODE_TABLE + 16*itr + 1] != -1) then
+			backup;
+			R1 = RELEASE_INODE;
+			R2 = currentPID;
+			R3 = itr;
+			call MOD_0;
+			restore;
+		endif;
+		itr = itr + 1;
+	endwhile;
+	return;
+endif;
+			
+			
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

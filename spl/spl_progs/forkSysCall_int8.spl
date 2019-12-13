@@ -1,0 +1,172 @@
+//system call number for fork is 8
+alias PPID R6;
+PPID=[SYSTEM_STATUS_TABLE+1];
+
+[PROCESS_TABLE+PPID*16+9]=8;
+
+//switching to kernel stack
+alias userSP R0;
+userSP=SP;
+
+[PROCESS_TABLE+PPID*16+13]=SP;
+SP=[PROCESS_TABLE+PPID*16+11]*512-1;
+
+//calling Get Pcb Function of process manager module
+alias freePCB_index R1;
+multipush(R0,R6);
+R1=1;
+call MOD_1;
+freePCB_index=R0;
+multipop(R0,R6);
+if(freePCB_index==-1) then
+	[[PTBR+2*((userSP-1)/512)]*512+(userSP-1)%512]=-1;
+	[PROCESS_TABLE+PPID*16+9]=0;
+	SP=userSP;
+	ireturn;
+endif;
+//checking for heap pages and allocating if they are not allocated
+if([PTBR+4]==-1) then
+	//calling get free page function of memory manager module
+	multipush(R0,R1,R6);
+	R1=1;
+	call MOD_2;
+	[PTBR+4]=R0;
+	[PTBR+5]="0110";
+	R1=1;
+	call MOD_2;
+	[PTBR+6]=R0;
+	[PTBR+7]="0110";
+	multipop(R0,R1,R6);
+endif;
+
+alias child_PT R2;
+child_PT=PROCESS_TABLE+freePCB_index*16;
+alias p_PT R3;
+alias CPTBR R4;
+CPTBR=PAGE_TABLE_BASE+freePCB_index*20;
+p_PT=PROCESS_TABLE+PPID*16;
+alias freepage R8;
+//obtaining memory page for userAreaPage
+//calling get free page of memory manager module
+multipush(R0,R1,R2,R3,R4,R6);
+R1=1;
+call MOD_2;
+freepage=R0;
+multipop(R0,R1,R2,R3,R4,R6);
+[child_PT+11]=freepage;
+
+//obtaining memory pages for stack
+multipush(R0,R1,R2,R3,R4,R6);
+R1=1;
+call MOD_2;
+freepage=R0;
+multipop(R0,R1,R2,R3,R4,R6);
+[CPTBR+16]=freepage;
+multipush(R0,R1,R2,R3,R4,R6);
+R1=1;
+call MOD_2;
+freepage=R0;
+multipop(R0,R1,R2,R3,R4,R6);
+[CPTBR+18]=freepage;
+
+//userid is entry number 4 , userid of parent and child process will be same
+//[SYSTEM_STATUS_TABLE+1] hasn't changed upto now, so we can use that  
+[child_PT+3]=[p_PT+3];
+
+//swap flag
+[child_PT+6]=[p_PT+6];
+
+//userarea swap status
+[child_PT+10]=[p_PT+10];
+
+//inode index
+[child_PT+7]=[p_PT+7];
+
+//UPTR
+[child_PT+13]=[p_PT+13];
+
+//MODE FLAG, KPTR, TICK fields will be set to 0
+
+//TICK
+[child_PT]=0;
+
+//MODE FLAG
+[child_PT+9]=0;
+
+//KPTR
+[child_PT+12]=0;
+
+//PARENT PID : PPID
+[child_PT+2]=PPID;
+
+//process status 
+[child_PT+4]=CREATED;
+
+
+//coping per process resource table
+alias iter R5;
+iter=0;
+
+R9=[child_PT+11]*512+496;
+R10=[p_PT+11]*512+496;
+while(iter<8) do
+	R11=R9+2*iter;
+	R12=R10+2*iter;
+	[R11]=[R12];
+	[R11+1]=[R12+1];
+	if([R12]==1) then
+		[SEMAPHORE_TABLE+4*[R12+1]+1]=[SEMAPHORE_TABLE+4*[R12+1]+1]+1;
+	endif;
+	if([R12]==0) then
+		[OPEN_FILE_TABLE+4*[R12+1]+1]=[OPEN_FILE_TABLE+4*[R12+1]+1]+1;
+	endif;
+		
+	iter=iter+1;
+endwhile;
+
+//coping disk map table, disk block number of code pages will be same for parent and child and heap is shared, no swapping of stack page and userAreaPage upto now for parent
+iter=0;
+while(iter<10) do
+	[DISK_MAP_TABLE+freePCB_index*10+iter]=[DISK_MAP_TABLE+PPID*10+iter];
+	iter=iter+1;
+endwhile;
+
+//code, heap, library 
+iter=0;
+while(iter<8) do
+	R9=2*iter;
+	[CPTBR+R9]=[PTBR+R9];
+	if([PTBR+R9+1]!="0000") then
+		[MEMORY_FREE_LIST+[PTBR+R9]]=[MEMORY_FREE_LIST+[PTBR+R9]]+1;
+	endif;
+	[CPTBR+R9+1]=[PTBR+R9+1];
+	iter=iter+1;
+endwhile;
+
+//stack
+[CPTBR+17]="0110";
+[CPTBR+19]="0110";
+
+//copying stack content of parent to stack of child
+iter=0;
+while(iter<512) do
+	//1st stack page
+	[[CPTBR+16]*512+iter]=[[PTBR+16]*512+iter];
+
+	//2nd stack page
+	[[CPTBR+18]*512+iter]=[[PTBR+18]*512+iter];
+	iter=iter+1;
+endwhile;
+//saving BP in kernel stack, this is used to initialize BP register for child when it is scheduled for the first time
+[child_PT+12]=[child_PT+12]+1;
+[[child_PT+11]*512+[child_PT+12]]=BP;	
+
+
+//setting up return values for parent and child
+[[PTBR+2*((userSP-1)/512)]*512+(userSP-1)%512]=freePCB_index;
+[[CPTBR+2*((userSP-1)/512)]*512+(userSP-1)%512]=0;
+//resetting mode flag for parent
+[PROCESS_TABLE+PPID*16+9]=0;
+
+SP=userSP;
+ireturn;

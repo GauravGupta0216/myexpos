@@ -1,0 +1,22 @@
+[PROCESS_TABLE + [SYSTEM_STATUS_TABLE + 1] *16 + 13] = SP;
+SP = [PROCESS_TABLE + [SYSTEM_STATUS_TABLE + 1] *16 + 11]*512 - 1;
+
+backup;
+
+alias reqPID R0;
+reqPID = [TERMINAL_STATUS_TABLE + 1];
+
+[PROCESS_TABLE + 16*reqPID + 8] = P0;
+
+//Releasing the terminal
+multipush (R0,R1);
+R1 = 9;
+R2 = reqPID;
+call MOD_0;             //Calling Resourse Manager Module
+multipop (R0,R1);
+
+restore;
+
+SP = [PROCESS_TABLE + [SYSTEM_STATUS_TABLE + 1]*16 + 13];
+
+ireturn;

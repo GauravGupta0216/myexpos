@@ -1,0 +1,211 @@
+[PROCESS_TABLE + [SYSTEM_STATUS_TABLE + 1] * 16 + 13] = SP;
+alias userSP R1;
+userSP = SP;
+
+SP = [PROCESS_TABLE + [SYSTEM_STATUS_TABLE + 1] * 16 + 11] * 512 - 1;	//change to kernel stack
+
+alias syscall R2;
+syscall = [[PTBR + 2 * ((userSP - 5) / 512)] * 512 + (userSP - 5) % 512];
+
+alias ret_addr R10;
+ret_addr = [PTBR + 2 * ((userSP - 1) / 512)] * 512 + (userSP - 1) % 512;
+
+alias PTE R11;
+PTE = PROCESS_TABLE + [SYSTEM_STATUS_TABLE + 1] * 16; 
+
+//----------------------------OPEN SYSTEM CALL--------------------------//
+if(syscall == 2) then
+	[PTE + 9] = 2;
+
+	alias fileName R3;
+	fileName = [[PTBR + 2*((userSP-4)/512)]*512 + (userSP-4)%512];	
+
+	alias user_area_page R4;
+	user_area_page = [PTE + 11];
+	
+	alias itr R5;
+	itr = 496;
+	
+	alias filedesc R6;
+	filedesc = -1;
+	//find free per process resource table entry
+	while(itr < 512) do
+		if([user_area_page*512 + itr] == -1) then
+			filedesc = (itr-496)/2;
+			break;
+		endif;
+		itr = itr + 2;
+	endwhile;
+
+	//if there is no free entry return -3
+	if(filedesc == -1) then
+		[ret_addr] = -3;
+		[PTE + 9] = 0;
+		SP = userSP;
+		ireturn;
+	endif;
+
+	alias ft_idx R7;
+
+	//invoke open function from file manager module
+	multipush(R1,R2,R3,R4,R5,R6,R10,R11);
+	R1 = OPEN;
+	R2 = fileName;
+	call FILE_MANAGER;
+	ft_idx = R0;
+	multipop(R1,R2,R3,R4,R5,R6,R10,R11);
+	
+	//if file not found or file type is not data or root file then return -1
+	if(ft_idx == -1) then
+		[ret_addr] = -1;
+		[PTE + 9] = 0;
+		SP = userSP;
+		ireturn;
+	endif;
+
+	//if system reached its limit of open files
+	if(ft_idx == -2) then
+		[ret_addr] = -2;
+		[PTE + 9] = 0;
+		SP = userSP;
+		ireturn;
+	endif;
+
+	[user_area_page*512 + 496 + 2*filedesc] = FILE;
+	[user_area_page*512 + 496 + 2*filedesc + 1] = ft_idx;
+
+	[ret_addr] = filedesc;
+	[PTE + 9] = 0;
+	SP = userSP;
+	ireturn;
+endif;
+
+
+//-------------------------------CLOSE SYSTEM CALL---------------------------//
+if(syscall == 3) then
+	[PTE + 9] = 3;
+
+	alias filedesc R3;
+	filedesc = [[PTBR + 2*((userSP-4)/512)]*512 + (userSP-4)%512];	
+
+	if(filedesc < 0 || filedesc > 7) then                 //return -1;
+		[ret_addr] = -1;
+		[PTE + 9] = 0;
+		SP = userSP;
+		ireturn;
+	endif;	
+
+	alias user_area_page R4;
+	user_area_page = [PTE + 11];
+	
+	if([user_area_page*512+496+2*filedesc]!=FILE)then
+		[ret_addr] = -1;
+		[PTE + 9] = 0;
+		SP = userSP;
+		ireturn;
+	endif;	
+
+	alias oft_idx R5;
+	oft_idx = [user_area_page*512 + 496 + 2*filedesc + 1];
+
+	//invoke close function from file manager module
+	multipush(R1,R2,R3,R4,R5,R10,R11);
+	R1 = CLOSE;
+	R2 = oft_idx;
+	call FILE_MANAGER;
+	multipop(R1,R2,R3,R4,R5,R10,R11);
+
+	[user_area_page*512 + 496 + 2*filedesc] = -1;
+
+	[ret_addr] = 0;
+	[PTE + 9] = 0;
+	SP = userSP;
+	ireturn;
+endif;	
+
+
+//-------------------------SEEK SYSTEM CALL---------------------------//
+if(syscall == 6) then
+	[PTE + 9] = 3;
+
+	alias fileDesc R3;
+	fileDesc = [[PTBR + 2*((userSP-4)/512)]*512 + (userSP-4)%512];
+
+	alias offset R4;
+	offset = [[PTBR + 2*((userSP-3)/512)]*512 + (userSP-3)%512];
+
+	alias user_area_page R5;
+	user_area_page = [PTE + 11];
+
+	if(fileDesc<0 || fileDesc>=8 || [user_area_page*512 + 496 + 2*fileDesc] != FILE) then
+		[ret_addr] = -1;
+		[PTE + 9] = 0;
+		SP = userSP;
+		ireturn;
+	endif;	
+
+	alias oft_idx R12;
+	oft_idx = [user_area_page*512 + 496 + 2*fileDesc + 1];
+
+	alias inode_idx R13;
+	inode_idx = [OPEN_FILE_TABLE + 4*oft_idx];		
+
+	multipush(R1,R2,R3,R4,R5,R6,R11,R12,R13);
+	R1 = ACQUIRE_INODE;
+	R2 = [SYSTEM_STATUS_TABLE + 1];
+	R3 = inode_idx;
+	call MOD_0;
+	multipop(R1,R2,R3,R4,R5,R6,R11,R12,R13);
+
+	//if acquire inode fails then return -1
+	if(R0 == -1) then
+		[ret_addr] = -1;
+		[PTE + 9] = 0;
+		SP = userSP;
+		ireturn;
+	endif;	
+
+	alias lseek R6;
+	lseek = [OPEN_FILE_TABLE + 4*oft_idx + 2];
+
+	if((inode_idx == INODE_ROOT && lseek == 480) || (lseek + offset < 0)) then
+		multipush(R1,R2,R3,R4,R5,R6,R11,R12,R13);
+		R1 = RELEASE_INODE;
+		R2 = [SYSTEM_STATUS_TABLE + 1];
+		R3 = inode_idx;
+		call MOD_0;
+		multipop(R1,R2,R3,R4,R5,R6,R11,R12,R13);
+		
+		[ret_addr] = -2;
+		[PTE + 9] = 0;
+		SP = userSP;
+		ireturn;
+	endif;	
+
+	if(offset == 0) then
+		[OPEN_FILE_TABLE + 4*oft_idx + 2] = 0;
+	else
+		if((lseek + offset) > [INODE_TABLE + 16*inode_idx + 2]) then
+			[OPEN_FILE_TABLE+4*oft_idx + 2] = [INODE_TABLE + 16*inode_idx + 2];	
+		else
+			[OPEN_FILE_TABLE+4*oft_idx + 2] = lseek + offset;
+		endif;
+	endif;
+
+	multipush(R1,R2,R3,R4,R5,R6,R11,R12,R13);
+	R1 = RELEASE_INODE;
+	R2 = [SYSTEM_STATUS_TABLE + 1];
+	R3 = inode_idx;
+	call MOD_0;
+	multipop(R1,R2,R3,R4,R5,R6,R11,R12,R13);
+	
+	[ret_addr] = -2;
+	[PTE + 9] = 0;
+	SP = userSP;
+	ireturn;
+endif;	
+	
+	
+
+
+

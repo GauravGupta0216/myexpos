@@ -1,0 +1,123 @@
+alias functionNum R1;
+
+//------------------GET FREE PAGE----------------------//
+if (functionNum == 1) then
+  	alias currentPID R2;
+  	currentPID = [SYSTEM_STATUS_TABLE + 1];
+  	[SYSTEM_STATUS_TABLE + 3] = [SYSTEM_STATUS_TABLE + 3] + 1;
+
+  	while([SYSTEM_STATUS_TABLE + 2]==0) do
+    		[PROCESS_TABLE + currentPID*16 + 4]=WAIT_MEM;
+    		call MOD_5;
+  	endwhile;
+
+  	//Decrementing WAIT_MEM_COUNT
+  	[SYSTEM_STATUS_TABLE + 3] = [SYSTEM_STATUS_TABLE + 3] - 1;
+
+  	//Decrementing MEM_FREE_COUNT
+  	[SYSTEM_STATUS_TABLE + 2] = [SYSTEM_STATUS_TABLE + 2] - 1;
+
+  	//Finding free page in memory free list
+  	alias iter R3;
+  	iter = 76;
+  	while(iter<128) do
+  	  	if([MEMORY_FREE_LIST + iter] == 0) then
+  	    		break;
+  	  	endif;
+  	  	iter = iter + 1;
+  	endwhile;
+  	//Setting entry to 1 and returning the page number
+  	[MEMORY_FREE_LIST + iter] = 1;
+  	R0 = iter;
+  	return;
+endif;
+
+
+//--------------------RELEASE PAGE--------------------------//
+if (functionNum == 2) then
+  	alias pageNumToRelease R2;
+  	//Decrease entry in MEMORY_FREE_LIST
+  	[MEMORY_FREE_LIST + pageNumToRelease] = [MEMORY_FREE_LIST + pageNumToRelease] - 1;
+  	// Checking if page is free (mem free list entry = 0)
+  	if ([MEMORY_FREE_LIST + pageNumToRelease] == 0) then
+    		//Incrementing MEM_FREE_COUNT
+    		[SYSTEM_STATUS_TABLE + 2] = [SYSTEM_STATUS_TABLE + 2] + 1;
+
+  		//Setting processs in WAIT_MEM to READY
+  		alias iter R3;
+  		iter = 0;
+  		while(iter<15) do
+  		  	if([PROCESS_TABLE + iter*16 + 4]==WAIT_MEM) then
+  		    		[PROCESS_TABLE + iter*16 + 4] = READY;
+  		  	endif;
+  		  	iter = iter + 1;
+  		endwhile;
+	endif;
+  	return;
+endif;
+
+//----------------------GET FREE BLOCK----------------------------//
+if(functionNum == 3) then
+	alias itr R3;
+	itr = DISK_FREE_AREA;
+	R0 = -1;
+	while(itr < DISK_SWAP_AREA) do
+		if([DISK_FREE_LIST + itr] == 0) then
+			R0 = itr;
+			break;
+		endif;
+		itr = itr + 1;
+	endwhile;
+	return;
+endif;
+
+//-----------------------RELEASE BLOCK----------------------------//
+if(functionNum == 4) then
+	alias blockNum R2;
+    	[DISK_FREE_LIST + blockNum] = 0;
+  	return;
+endif;
+
+//-----------------------GET CODE PAGE----------------------------//
+if(functionNum == 5) then
+  	alias blockNum R2;
+  	alias currentPID R3;
+  	//Checking disk map entries of all process for block number
+  	alias iter R4;
+  	iter = 0;
+  	while (iter<15) do
+    		alias iter_entry R5;
+    		iter_entry = 0;
+    		while(iter_entry<4) do
+      		if([DISK_MAP_TABLE + iter*10 + 4 + iter_entry] == blockNum) then
+        		if([PAGE_TABLE_BASE + iter*20 + 8 + 2*iter_entry + 1] != "0000") then
+          			//Returning memory page number
+          			R0 = [PAGE_TABLE_BASE + iter*20 + 8 + 2*iter_entry];
+          			[MEMORY_FREE_LIST + R0] = [MEMORY_FREE_LIST + R0] + 1;
+          			return;
+        		endif;
+      		endif;
+      		iter_entry = iter_entry + 1;
+    		endwhile;
+  		iter = iter + 1;
+  	endwhile;
+  	alias free_page R6;
+  	multipush(R0, R1, R2, R3, R4, R5);
+  	R1 = 1;
+  	call MOD_2;
+  	free_page = R0;
+  	multipop(R0, R1, R2, R3, R4, R5);
+  
+	multipush(R0, R1, R2, R3, R4, R5, R6);
+  	R1 = 2;
+  	R4 = blockNum;
+  	R2 = currentPID;
+  	R3 = free_page; 
+  	call MOD_4;
+  	multipop(R0, R1, R2, R3, R4, R5, R6);
+
+  	R0 = free_page;
+  	return;
+endif;
+
+

@@ -1,0 +1,194 @@
+//--------------------------------------FILE MANAGER-----------------------------------//
+
+alias functionNum R1;
+
+//--------------------------OPEN FUNCTION------------------------//
+if(functionNum == OPEN) then
+	alias fileName R2;
+	alias inode_idx R3;
+	alias itr R4;
+
+	inode_idx = -1;
+	itr = 0;
+
+	while(itr < MAX_FILE_NUM) do
+		if([INODE_TABLE + 16*itr + 1] == fileName) then
+			inode_idx = itr;
+			break;
+		endif;
+		itr = itr + 1;
+	endwhile;
+		
+	//if entry is not found then return -1
+	if(inode_idx == -1) then
+		R0 = -1;
+		return;
+	endif;
+
+	//Invoke Acquire inode
+	multipush(R1,R2,R3,R4);
+	R1 = ACQUIRE_INODE;
+	R2 = [SYSTEM_STATUS_TABLE + 1];
+	R3 = inode_idx;
+	call RESOURCE_MANAGER;
+	
+	//if locking fail return -1
+	if(R0 == -1) then
+		multipop(R1,R2,R3,R4);		
+		R0 = -1;
+		return;
+	endif;
+	multipop(R1,R2,R3,R4);
+
+	//if file is of type EXEC then call release_inode and return -1
+	if([INODE_TABLE + 16*inode_idx] == EXEC) then
+		multipush(R1,R2,R3,R4);
+		R1 = RELEASE_INODE;
+		R2 = [SYSTEM_STATUS_TABLE + 1];
+		R3 = inode_idx;
+		call RESOURCE_MANAGER;
+		multipop(R1,R2,R3,R4);
+
+		R0 = -1;
+		return;
+	endif;
+
+	//find free entry in open file table
+	alias oft_idx R5;
+	oft_idx = -1;
+	itr = 0;
+	while(itr < MAX_OPENFILE_NUM) do
+		if([OPEN_FILE_TABLE + 4*itr] == -1) then
+			oft_idx = itr;
+			break;
+		endif;
+		itr = itr + 1;
+	endwhile;
+
+	//if there are no free entry then release inode and return -2
+	if(oft_idx == -1) then
+		multipush(R1,R2,R3,R4,R5);
+		R1 = RELEASE_INODE;
+		R2 = [SYSTEM_STATUS_TABLE + 1];
+		R3 = inode_idx;
+		call RESOURCE_MANAGER;
+		multipop(R1,R2,R3,R4,R5);
+
+		R0 = -2;
+		return;
+	endif;
+
+	if(fileName == "root") then
+		[OPEN_FILE_TABLE + 4*oft_idx] = INODE_ROOT;
+	else
+		if([FILE_STATUS_TABLE + 4*inode_idx + 1] == -1) then
+			[FILE_STATUS_TABLE + 4*inode_idx + 1] = 1;
+		else
+			[FILE_STATUS_TABLE+4*inode_idx+1]=[FILE_STATUS_TABLE+4*inode_idx+1]+1;	
+		endif;
+		[OPEN_FILE_TABLE + 4*oft_idx] = inode_idx;
+	endif;
+
+	[OPEN_FILE_TABLE + 4*oft_idx + 1] = 1;                    //Open Instance Count
+	[OPEN_FILE_TABLE + 4*oft_idx + 2] = 0;                    //LSEEK
+
+	multipush(R1,R2,R3,R4,R5);
+	R1 = RELEASE_INODE;
+	R2 = [SYSTEM_STATUS_TABLE + 1];
+	R3 = inode_idx;
+	call RESOURCE_MANAGER;
+	multipop(R1,R2,R3,R4,R5);
+
+	R0 = oft_idx;
+	return;
+endif;
+
+//--------------------------------CLOSE FUNCTION-----------------------------//
+if(functionNum == CLOSE) then
+	backup;
+	alias oft_idx R2;
+	alias inode_idx R3;
+
+	inode_idx = [OPEN_FILE_TABLE + 4*oft_idx];
+	[OPEN_FILE_TABLE + 4*oft_idx + 1]  = [OPEN_FILE_TABLE + 4*oft_idx + 1] - 1;
+
+	if([OPEN_FILE_TABLE + 4*oft_idx + 1] == 0) then
+		[OPEN_FILE_TABLE + 4*oft_idx + 0] = -1;
+		[OPEN_FILE_TABLE + 4*oft_idx + 1] = -1;
+		[OPEN_FILE_TABLE + 4*oft_idx + 2] = -1;	
+
+		if([INODE_TABLE + 16*inode_idx + 1] != "root") then
+			[FILE_STATUS_TABLE+16*inode_idx+1]=[FILE_STATUS_TABLE+16*inode_idx+1]-1;
+		endif;
+
+		if([FILE_STATUS_TABLE+16*inode_idx+1] == 0) then
+			[FILE_STATUS_TABLE+16*inode_idx+1] = -1;
+		endif;
+	endif;
+	restore;
+	return;
+endif;			
+
+//----------------------BUFFER READ AND WRITE FUNCTION---------------------//
+if(functionNum == 1 || functionNum == 2) then
+	alias blockNum R2;
+	alias offset R3;
+	alias mem_addr R4;
+	alias buff_num R5;
+	buff_num = blockNum%4;
+	
+	//Acquire buffer
+	multipush(R1,R2,R3,R4,R5);
+	R1 = ACQUIRE_BUFFER;
+	R2 = [SYSTEM_STATUS_TABLE + 1];
+	R3 = buff_num;
+	call RESOURCE_MANAGER;
+	multipop(R1,R2,R3,R4,R5);
+
+	if([BUFFER_TABLE + 4*buff_num] != blockNum) then
+		if([BUFFER_TABLE + 4*buff_num + 1] == 1) then             //write back the content
+			multipush(R1,R2,R3,R4,R5);
+			R1 = DISK_STORE;	
+			R2 = [SYSTEM_STATUS_TABLE + 1];
+			R3 = 71 + buff_num;
+			R4 = [BUFFER_TABLE + 4*buff_num];
+			call MOD_4;
+			multipop(R1,R2,R3,R4,R5);
+		
+			[BUFFER_TABLE + 4*buff_num + 1] = 0; 
+		endif;
+
+		multipush(R1,R2,R3,R4,R5);
+		R4 = R2;
+		R1 = DISK_LOAD;
+		R2 = [SYSTEM_STATUS_TABLE + 1];
+		R3 = 71 + buff_num;
+		call MOD_4;
+		multipop(R1,R2,R3,R4,R5);
+
+		[BUFFER_TABLE + 4*buff_num] = blockNum;
+	endif;
+	
+	if(functionNum == 2) then
+		[mem_addr] = [(71 + buff_num)*512 + offset];
+	else
+		[(71 + buff_num)*512 + offset] = mem_addr;              //mem_addr is word to write
+	endif; 
+	[BUFFER_TABLE + 4*buff_num + 1] = 1;                            //Mark the buffer dirty
+
+	multipush(R1,R2,R3,R4,R5);
+	R1 = RELEASE_BUFFER;
+	R2 = [SYSTEM_STATUS_TABLE + 1];
+	R3 = buff_num;
+	call MOD_0;
+	multipop(R1,R2,R3,R4,R5);
+
+	return;
+endif;	
+
+
+
+
+
+
+

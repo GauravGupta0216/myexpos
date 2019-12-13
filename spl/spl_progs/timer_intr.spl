@@ -1,0 +1,24 @@
+//Save the current value of user SP into corresponding Process Table entry
+[PROCESS_TABLE + ( [SYSTEM_STATUS_TABLE + 1] * 16) + 13] = SP;
+
+// Setting SP to UArea Page number * 512 - 1
+//Set SP to beginning of kernel Stack
+SP = [PROCESS_TABLE + ([SYSTEM_STATUS_TABLE + 1] * 16) + 11] * 512 - 1;
+
+//Save the User context to kernel stack
+backup;
+
+//changing current process state
+[PROCESS_TABLE + ([SYSTEM_STATUS_TABLE+1]*16)+4] = READY;
+
+//call context switch module
+call MOD_5;
+
+//restoring context
+restore;
+
+SP = [PROCESS_TABLE + ([SYSTEM_STATUS_TABLE+1]*16) + 13];
+[PROCESS_TABLE + ([SYSTEM_STATUS_TABLE+1]*16) + 9]=0;
+
+//switch to user mode
+ireturn;

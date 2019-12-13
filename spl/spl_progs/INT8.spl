@@ -1,0 +1,147 @@
+//-------------------FORK SYSTEM CALL-------------------------//
+
+[PROCESS_TABLE + [SYSTEM_STATUS_TABLE + 1]*16 + 9] = 8;
+[PROCESS_TABLE + [SYSTEM_STATUS_TABLE + 1]*16 + 13] = SP;
+SP = [PROCESS_TABLE + [SYSTEM_STATUS_TABLE + 1]*16 + 11]*512 - 1;
+
+//Invoke the GET PCB ENTRY
+R1 = GET_PCB_ENTRY;
+call MOD_1;
+
+alias childPID R1;
+childPID = R0;
+
+if(childPID == -1) then
+	alias userSP R1;
+	userSP = [PROCESS_TABLE+[SYSTEM_STATUS_TABLE+1]*16+13];
+	[[PTBR+2*((userSP-1)/512)]*512 + (userSP-1)%512] = -1;
+	[PROCESS_TABLE+[SYSTEM_STATUS_TABLE+1]*16+9] = 0;
+	SP = userSP;	
+	ireturn;
+endif;
+
+//IF Heap is not allocated, allocate it
+if([PTBR + 4] == -1) then
+	multipush(R1);
+	R1 = 1;
+	call MOD_2;
+	[PTBR + 4] = R0;
+	[PTBR + 5] = "0110";
+	multipop(R1);
+
+	multipush(R1);
+	R1 = 1;
+	call MOD_2;
+	[PTBR + 6] = R0;
+	[PTBR + 7] = "0110";
+	multipop(R1);
+endif;
+
+PTBR = PAGE_TABLE_BASE + childPID*20;
+PTLR = 10;
+
+//GET NEW PAGES FOR STACK BY CALLING GET_FREE_PAGE FOR EACH
+multipush(R1);
+R1 = 1;
+call MOD_2;
+[PTBR + 16] = R0;
+[PTBR + 17] = "0110";
+multipop(R1);
+
+multipush(R1);
+R1 = 1;
+call MOD_2;
+[PTBR + 18] = R0;
+[PTBR + 19] = "0110";
+multipop(R1);
+
+//GET NEW PAGES FOR USER AREA PAGE BY CALLING GET_FREE_PAGE FOR EACH
+multipush(R1);
+R1 = 1;
+call MOD_2;
+alias userAreaPageNum R2;
+userAreaPageNum = R0;
+multipop(R1);
+
+alias ppte R7;
+alias cpte R8;
+ppte = PROCESS_TABLE + [SYSTEM_STATUS_TABLE + 1]*16; //parent process table
+cpte = PROCESS_TABLE + childPID*16;                  //child process table
+
+//PID, PTBR and PTLR are already initilized in GET PCB ENTRY Function
+[cpte] = 0;                                   //TICK field
+[cpte + 2] = [SYSTEM_STATUS_TABLE + 1];       //Set PPid to pid of parent
+[cpte + 3] = [ppte + 3];                      //copy userID
+[cpte + 4] = CREATED;                         //State of child set to Created
+[cpte + 6] = [ppte + 6];                      //copy swap flag
+[cpte + 7] = [ppte + 7];                      //copy inode index
+[cpte + 9] = 0;                               //MODE Flag is set to 0
+[cpte + 10] = [ppte + 10];                    //copy user area swap status field
+[cpte + 11] = userAreaPageNum;
+[cpte + 12] = 0;                              //KPTR is set to 0
+[cpte + 13] = [ppte + 13];                    //copy UPTR
+
+alias count R3;
+alias par_user_area_page R4;
+par_user_area_page = [ppte +11];
+
+count = 496;
+while(count < 512) do
+	[userAreaPageNum*512+count] = [par_user_area_page*512+count];
+	[userAreaPageNum*512+count+1] = [par_user_area_page*512+count+1];
+	if([par_user_area_page*512+count] == SEMAPHORE) then
+		[SEMAPHORE_TABLE + 4*([par_user_area_page*512+count+1])+1] = [SEMAPHORE_TABLE + 4*([par_user_area_page*512+count+1])+1]+1;
+	endif;
+
+	if([par_user_area_page*512+count] == FILE) then
+		[OPEN_FILE_TABLE + 4*([par_user_area_page*512+count+1])+1] = [OPEN_FILE_TABLE + 4*([par_user_area_page*512+count+1])+1]+1;
+	endif;
+
+	count = count + 2;
+endwhile;
+
+//copy the per-process disk map table of the parent to the child
+count = 0;
+while(count < 10) do
+	if(count == 0 || count == 8 || count == 9) then
+		[DISK_MAP_TABLE + childPID*10 + count] = -1; //make invalid
+		[DISK_MAP_TABLE + [SYSTEM_STATUS_TABLE + 1]*10 + count] = -1;
+	else
+		[DISK_MAP_TABLE + childPID*10 + count] = [DISK_MAP_TABLE + [SYSTEM_STATUS_TABLE + 1]*10 + count];
+	endif;
+	count = count + 1;
+endwhile;
+
+//Initialize Page Table of child Process
+alias PPTBR R6;
+PPTBR = PAGE_TABLE_BASE + [SYSTEM_STATUS_TABLE + 1]*20; //Parent PTBR
+count = 0;
+while(count < 8) do
+	[PTBR + count*2] = [PPTBR + 2*count];
+	[PTBR + count*2 + 1] = [PPTBR + 2*count + 1];
+	[MEMORY_FREE_LIST + [PTBR + count*2]] = [MEMORY_FREE_LIST + [PTBR + count*2]]  + 1;
+	count = count + 1;
+endwhile;
+
+
+//copy the content of the user stack page of parent to child user stack
+count = 0;
+while(count < 512) do
+	[[PTBR + 16]*512 + count] = [[PPTBR + 16]*512 + count];
+	[[PTBR + 18]*512 + count] = [[PPTBR + 18]*512 + count];
+	count = count + 1;
+endwhile;
+
+//[userAreaPageNum*512] = BP; //store bp on top of kernel stack of child
+[cpte+12]=[cpte+12]+1;
+[[cpte+11]*512+[cpte+12]]=BP;
+
+//set the return value to user stacks for parent and child
+[[PPTBR + 2*([ppte + 13]-1)/512]*512 + ([ppte + 13]-1)%512] = childPID;
+[[PTBR + 2*([cpte + 13]-1)/512]*512 + ([cpte + 13]-1)%512] = 0;
+
+//reset the mode flag of parent process
+[ppte + 9] = 0;
+SP = [ppte + 13];
+PTBR = PPTBR;
+ireturn;
