@@ -1,0 +1,21 @@
+int main()
+{
+	
+decl
+	int ret;
+	str filename; 
+enddecl
+
+begin
+	read(filename);
+	ret = exposcall("Exec",filename);
+	if(ret == -1) then
+		write("file not present");
+	endif;	
+	if(ret == -2) then
+		write("out of memory");	
+	endif;
+	return 0;
+end
+
+}

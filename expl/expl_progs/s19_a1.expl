@@ -1,0 +1,66 @@
+type
+node {
+    int x;
+    node next;
+}
+endtype
+decl
+    node head;
+    int insert(int data);
+    int Print();
+enddecl
+int insert(int data) {
+decl
+    int ret;
+    node temp, temp1;
+enddecl
+    begin
+        temp = alloc();
+        temp.x = data;
+        temp.next = null;
+        if(head == null) then
+            head = temp;
+        else
+            temp1 = head;
+            while(temp1.next != null) do
+                temp1 = temp1.next;
+            endwhile;
+            temp1.next = temp;
+        endif;
+        return 0;
+    end
+}
+
+int Print(){
+decl
+    node temp2;
+enddecl
+    
+begin
+    temp2 = head;
+    while(temp2 != null) do
+        write(temp2.x);
+        temp2 = temp2.next;
+    endwhile;
+    return 0;
+end
+}
+
+int main()
+{
+    decl
+        int n,data,r;
+    enddecl
+    begin
+        head = null;
+        read(n);
+        r = initialize();
+        while(n > 0) do
+            read(data);
+            r = insert(data);
+            n = n - 1;
+        endwhile;
+        r = Print();
+        return 1;
+    end
+}

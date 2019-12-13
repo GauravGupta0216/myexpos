@@ -1,0 +1,26 @@
+int main(){
+decl
+	int a,i,j,p;
+enddecl
+
+begin
+	a = 30;
+	i = 2;
+	while(i <= a) do
+		j = 2;
+		p = 1;
+		while(j < i) do
+			if((i%j) == 0) then
+				p = 0;
+				break;
+			endif;
+			j = j + 1;
+		endwhile;
+		if(p == 1) then
+			write(i);
+		endif;
+		i = i + 1;
+	endwhile;
+	return 0;		
+end
+}

@@ -1,0 +1,27 @@
+int main()
+{
+decl
+	int range,num,i,temp;
+enddecl
+
+begin
+	range = 20;
+	while(range > 1) do
+		i = 2;
+		while(i < range) do
+			num = range % i;
+			temp = exposcall("write", -2 ,i);
+			if(num == 0) then
+				break;
+			endif;
+			i = i + 1;
+		endwhile;
+		if(i == range) then
+			temp = exposcall("write", -2 ,i);
+			break;
+		endif;
+		range = range - 1;
+	endwhile;
+	return 0;
+end 
+}

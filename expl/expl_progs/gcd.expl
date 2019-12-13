@@ -1,0 +1,19 @@
+int main(){
+decl 
+	int a,b;
+enddecl
+
+begin
+	read(a);
+	read(b);
+	while(a != b) do
+		if(a > b) then
+			a = a - b;
+		else
+			b = b - a;
+		endif;
+	endwhile;
+	write(a);
+	return 0;
+end
+}
